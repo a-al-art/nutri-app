@@ -10,6 +10,7 @@ export class SearchComponent {
   #modalContent;
   #debounceTimer = null;
   #currentProduct = null;
+  #abortController = null;
 
   constructor() {
     this.#input = document.getElementById('searchInput');
@@ -22,18 +23,20 @@ export class SearchComponent {
   }
 
   #bindEvents() {
-    // поиск с задержкой debounce 400мс
+    // поиск с задержкой debounce 800мс
     this.#input.addEventListener('input', () => {
       const val = this.#input.value.trim();
       this.#clearBtn.classList.toggle('visible', val.length > 0);
 
       clearTimeout(this.#debounceTimer);
-      if (val.length < 2) {
+      if (val.length < 3) {
         this.#showInitialState();
         return;
       }
-      this.#showLoading();
-      this.#debounceTimer = setTimeout(() => this.#performSearch(val), 400);
+      this.#debounceTimer = setTimeout(() => {
+  this.#showLoading();
+  this.#performSearch(val);
+}, 800);
     });
 
     // очистить поиск
@@ -54,18 +57,36 @@ export class SearchComponent {
   }
 
   async #performSearch(query) {
-    try {
-      const products = await FoodAPI.search(query);
-      if (products.length === 0) {
-        this.#showEmpty(query);
-      } else {
-        this.#renderResults(products);
-      }
-    } catch (error) {
-      this.#showError();
-      console.error('Search error:', error);
+  try {
+    // отменяем старый запрос
+    if (this.#abortController) {
+      this.#abortController.abort();
     }
+
+    this.#abortController = new AbortController();
+
+    const products = await FoodAPI.search(
+      query,
+      1,
+      this.#abortController.signal
+    );
+
+    if (products.length === 0) {
+      this.#showEmpty(query);
+    } else {
+      this.#renderResults(products);
+    }
+
+  } catch (error) {
+    // abort - нормально
+    if (error.name === 'AbortError') {
+      return;
+    }
+
+    this.#showError();
+    console.error('Search error:', error);
   }
+}
 
   #showInitialState() {
     this.#resultsEl.innerHTML = `

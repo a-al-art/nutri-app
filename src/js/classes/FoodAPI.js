@@ -9,7 +9,17 @@ export class FoodAPI {
    * @param {number} page - страница результатов (по умолчанию 1)
    * @returns {Promise<Array>}
    */
-  static async search(query, page = 1) {
+  static #cache = new Map();
+  static async search(query, page = 1, signal, retry = 1) {
+    const cacheKey = `${query}_${page}`;
+    if (this.#cache.has(cacheKey)) {
+      return this.#cache.get(cacheKey);
+    }
+
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), 7000);
+    signal?.addEventListener('abort', () => timeoutController.abort());
+
     const params = new URLSearchParams({
       search_terms: query,
       search_simple: 1,
@@ -20,14 +30,37 @@ export class FoodAPI {
       fields: 'id,product_name,brands,nutriments,image_small_url,categories_tags,quantity',
     });
 
-    const response = await fetch(`${this.#SEARCH_URL}?${params}`);
+
+
+    try {
+    const response = await fetch(
+      `${this.#SEARCH_URL}?${params}`,
+      { signal: timeoutController.signal }
+    );
+
+    clearTimeout(timeoutId);
+
+    if (response.status === 503 && retry > 0) {
+      await new Promise(r => setTimeout(r, 1000));
+      return this.search(query, page, signal, retry - 1);
+    }
+
     if (!response.ok) throw new Error(`API error: ${response.status}`);
 
     const data = await response.json();
-    return (data.products || [])
+    const result = (data.products || [])
       .filter(p => p.product_name && p.nutriments?.['energy-kcal_100g'])
       .map(p => this.#normalize(p));
+
+    this.#cache.set(cacheKey, result);
+
+    return result;
+
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
   }
+}
 
   /**
    * получение продукта по штрихкоду (barcode)
